@@ -165,6 +165,7 @@ export default function ClinicBookingWebsite() {
     localStorage.setItem("clinicBookings", JSON.stringify(bookings));
   }, [bookings]);
 
+  // Clean mount-only daily roster expiration validation
   useEffect(() => {
     const savedResetAt = Number(localStorage.getItem("clinicQueueResetAt"));
     const now = Date.now();
@@ -181,22 +182,28 @@ export default function ClinicBookingWebsite() {
       localStorage.setItem("clinicBookings", JSON.stringify([]));
       localStorage.setItem("clinicQueueResetAt", String(now));
     }
-  }, [bookings]);
+  }, []);
 
-  // Lock timer countdown side effect
+  // Highly optimized slot timer countdown side effect: Prevents interval rebuilding
   useEffect(() => {
-    if (showPaymentModal && slotLockTimeLeft > 0 && paymentLifecycle !== "BOOKING_CONFIRMED") {
-      timerRef.current = setInterval(() => {
-        setSlotLockTimeLeft((prev) => prev - 1);
+    let interval = null;
+    if (showPaymentModal && paymentLifecycle !== "BOOKING_CONFIRMED") {
+      interval = setInterval(() => {
+        setSlotLockTimeLeft((prev) => {
+          if (prev <= 1) {
+            setPaymentLifecycle("PAYMENT_FAILED");
+            setPaymentErrorMessage("Checkout lock timer expired. Slot released back to public availability.");
+            clearInterval(interval);
+            return 0;
+          }
+          return prev - 1;
+        });
       }, 1000);
-    } else if (slotLockTimeLeft === 0 && showPaymentModal) {
-      setPaymentLifecycle("PAYMENT_FAILED");
-      setPaymentErrorMessage("Checkout lock timer expired. Slot released back to public availability.");
-      clearInterval(timerRef.current);
     }
-
-    return () => clearInterval(timerRef.current);
-  }, [showPaymentModal, slotLockTimeLeft, paymentLifecycle]);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [showPaymentModal, paymentLifecycle]);
 
   const theme = darkMode ? "bg-zinc-950 text-zinc-100" : "bg-slate-50 text-slate-900";
   const card = darkMode ? "bg-zinc-900/60 border-zinc-800/80 text-zinc-100 shadow-xl shadow-black/20" : "bg-white border-slate-200/90 text-slate-900 shadow-sm";
@@ -562,7 +569,7 @@ export default function ClinicBookingWebsite() {
   );
 
   return (
-    <div className={`min-h-screen overflow-x-hidden ${theme} transition-colors duration-300 pb-28 md:pb-12 font-sans`}>
+    <div className={`min-h-screen flex flex-col justify-between overflow-x-hidden ${theme} transition-colors duration-300 font-sans`}>
       
       {/* SaaS subtle ambient backdrop */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
@@ -653,7 +660,7 @@ export default function ClinicBookingWebsite() {
         )}
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8 relative z-10">
+      <main className="flex-grow max-w-7xl mx-auto px-6 py-8 relative z-10 w-full">
         {page === "home" && (
           <div className="space-y-10 animate-fade-in">
             
@@ -681,7 +688,7 @@ export default function ClinicBookingWebsite() {
                       {translation.book} <ArrowRight size={14} />
                     </button>
                     
-                    <a href="tel:9631146327" className={`px-5 py-3.5 rounded-xl border text-xs font-bold tracking-wider uppercase transition-all flex items-center gap-2 justify-center hover:scale-105 active:scale-95 ${
+                    <a href="tel:9631146327" className={`px-5 py-3.5 rounded-xl border text-xs font-bold tracking-wider uppercase transition-colors flex items-center gap-2 justify-center hover:scale-105 active:scale-95 ${
                       darkMode ? "bg-zinc-900/50 border-zinc-800 text-zinc-300 hover:bg-zinc-800" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
                     }`}>
                       <PhoneCall size={14} className="text-teal-600 dark:text-teal-400" /> {translation.contact}
@@ -860,7 +867,7 @@ export default function ClinicBookingWebsite() {
                 </div>
 
                 <div>
-                  <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-slate-700 dark:text-zinc-300 font-bold">Select Appointment Slot</label>
+                  <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-zinc-700 dark:text-zinc-300 font-bold">Select Appointment Slot</label>
                   <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto pr-1">
                     {slots.map((slot) => (
                       <button 
@@ -915,7 +922,7 @@ export default function ClinicBookingWebsite() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-slate-700 dark:text-zinc-300 font-bold">Phone Number (For Booking Updates) <span className="text-rose-500">*</span></label>
+                    <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-zinc-700 dark:text-zinc-300 font-bold">Phone Number (For Booking Updates) <span className="text-rose-500">*</span></label>
                     <input
                       value={form.phone}
                       onChange={(e) => setForm({ ...form, phone: e.target.value })}
@@ -942,7 +949,7 @@ export default function ClinicBookingWebsite() {
                 </div>
 
                 <div>
-                  <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-slate-700 dark:text-zinc-300 font-bold">Symptom Notes / Clinical Description (Optional)</label>
+                  <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-zinc-700 dark:text-zinc-300 font-bold">Symptom Notes / Clinical Description (Optional)</label>
                   <textarea 
                     rows="2" 
                     value={form.reason} 
@@ -1111,7 +1118,7 @@ export default function ClinicBookingWebsite() {
 
             {showAddSlotRow && (
               <div className={`rounded-[1.5rem] p-5 border ${darkMode ? "bg-zinc-900/50 border-zinc-800" : "bg-white border-slate-200"} max-w-md space-y-3 animate-scale-up`}>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-750 dark:text-zinc-350">Create Operational Time Segment</h4>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-750 dark:text-zinc-300">Create Operational Time Segment</h4>
                 <div className="flex gap-2">
                   <input 
                     type="text" 
@@ -1173,7 +1180,7 @@ export default function ClinicBookingWebsite() {
                               {booking.name} 
                               <span className="text-[9px] font-mono bg-zinc-800 text-zinc-300 px-1.5 py-0.25 rounded">#{booking.token || index + 1}</span>
                             </div>
-                            <div className="text-[10px] tracking-wide uppercase text-zinc-500 dark:text-zinc-500 mt-1">
+                            <div className="text-[10px] tracking-wide uppercase text-zinc-500 dark:text-zinc-505 mt-1">
                               Ph: {booking.phone} • {booking.gender} • Age {booking.age}
                             </div>
                           </td>
@@ -1244,194 +1251,70 @@ export default function ClinicBookingWebsite() {
             </div>
           </section>
         )}
-      </main>
 
-      {/* CASHFREE SECURED DEPOSIT MODAL WITH SIMULATED FLOW CHECKPOINTS */}
-      {showPaymentModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-black/75 backdrop-blur-sm shadow-xl" onClick={() => {
-            if(!paymentLoading && paymentLifecycle !== "BOOKING_CONFIRMED") {
-              setPaymentLifecycle("PAYMENT_CANCELLED");
-              setPaymentErrorMessage("Checkout canceled. Patient dismissed the session.");
-            }
-          }} />
-          
-          <div className={`relative max-w-md w-full rounded-2xl p-6 ${card} z-10 border border-slate-200 dark:border-zinc-800 animate-scale-up shadow-2xl`}>
-            {/* Prevent closing during processing states */}
-            <button 
-              onClick={() => {
-                setPaymentLifecycle("PAYMENT_CANCELLED");
-                setPaymentErrorMessage("Checkout session dismissed manually.");
-                setShowPaymentModal(false);
-              }}
-              disabled={paymentLoading || paymentLifecycle === "PAYMENT_VERIFIED" || paymentLifecycle === "BOOKING_CONFIRMED"}
-              className="absolute top-4 right-4 p-2 rounded-lg hover:bg-teal-500/10 transition-colors disabled:opacity-35"
-            >
-              <X size={14} />
-            </button>
-
-            <div className="text-center">
-              <div className="h-10 w-10 bg-teal-500/10 text-teal-600 dark:text-teal-400 mx-auto rounded-xl flex items-center justify-center mb-3 border border-teal-500/20 shadow-sm">
-                <CreditCard size={20} className={paymentLoading ? "animate-spin" : ""} />
-              </div>
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1 tracking-tight">Secure Checkout</h3>
-              
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[10px] font-bold uppercase tracking-wider mb-4 animate-pulse">
-                <AlertCircle size={12} />
-                Demo Mode - Real Cashfree Integration Pending
-              </div>
-
-              {/* LIVE ARCHITECTURAL PROGRESS Lifecycles */}
-              <div className="mb-4 grid grid-cols-4 gap-1 text-[8px] uppercase tracking-widest font-bold text-slate-700 dark:text-zinc-400">
-                <div className={`py-1.5 rounded ${paymentLifecycle === "PENDING_PAYMENT" ? "bg-teal-500/20 text-teal-400 border-teal-500/30" : "bg-zinc-950/40 text-zinc-600"}`}>Intake</div>
-                <div className={`py-1.5 rounded ${paymentLifecycle === "PAYMENT_PROCESSING" ? "bg-teal-500/20 text-teal-400 border-teal-500/30 animate-pulse" : "bg-zinc-950/40 text-zinc-600"}`}>Process</div>
-                <div className={`py-1.5 rounded ${paymentLifecycle === "PAYMENT_VERIFIED" ? "bg-teal-500/20 text-teal-400 border-teal-500/30" : "bg-zinc-950/40 text-zinc-600"}`}>Verify</div>
-                <div className={`py-1.5 rounded ${paymentLifecycle === "BOOKING_CONFIRMED" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-zinc-950/40 text-zinc-600"}`}>Success</div>
-              </div>
-
-              {/* DYNAMIC TIMEOUT SLOT LOCKING BAR */}
-              {paymentLifecycle !== "BOOKING_CONFIRMED" && paymentLifecycle !== "PAYMENT_FAILED" && (
-                <div className="mb-4 p-2 bg-zinc-950/40 border border-zinc-900 rounded-lg flex items-center justify-between text-[11px]">
-                  <span className="text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-wide flex items-center gap-1.5">
-                    <Clock3 size={13} className="text-teal-500" /> Slot Lock Timer:
-                  </span>
-                  <span className="font-mono text-teal-400 font-black tracking-wider animate-pulse">{formatTimer(slotLockTimeLeft)}</span>
-                </div>
-              )}
-
-              <div className={`my-3 p-4 rounded-xl border text-left ${darkMode ? "bg-zinc-950/80 border-zinc-900" : "bg-slate-50 border-slate-150"}`}>
-                <div className={`flex justify-between items-center mb-2 pb-2 border-b ${darkMode ? "border-zinc-900/60" : "border-slate-200"}`}>
-                  <span className="text-[9px] text-slate-500 dark:text-zinc-500 uppercase font-bold">Order ID Reference</span>
-                  <span className="text-[10px] font-mono text-slate-700 dark:text-zinc-300 font-bold">{simulatedOrderId}</span>
-                </div>
-                <div className="text-[9px] text-slate-500 dark:text-zinc-500 uppercase font-bold mb-1">Queue Commitment Fee</div>
-                <div className="text-2xl font-black text-teal-600 dark:text-teal-400 tracking-wider font-mono">₹99.00</div>
-                <p className="text-[10px] text-slate-650 dark:text-zinc-400 mt-2 leading-relaxed">
-                  Holding roster segment for <strong className="text-slate-800 dark:text-zinc-200">{form.name || "Guest Patient"}</strong>. Token remains uncommitted until Cashfree payment authorization is resolved.
+        {page === "business-info" && (
+          <section className="max-w-3xl mx-auto py-8 md:py-12 animate-fade-in">
+            <div className={`rounded-[1.5rem] p-6 md:p-10 border ${darkMode ? "bg-zinc-900/30 border-zinc-800 text-zinc-100" : "bg-white border-slate-200 text-slate-900"} shadow-lg`}>
+              <h2 className="text-2xl md:text-3xl font-bold mb-6 tracking-tight">Business Information</h2>
+              <div className="space-y-6 text-sm md:text-base leading-relaxed">
+                <p className="font-semibold text-lg text-teal-600 dark:text-teal-400">
+                  This platform is operated by AJAY KUMAR SECURITY AGENCY.
+                </p>
+                <p className={muted}>
+                  AJAY KUMAR SECURITY AGENCY is the legal entity responsible for operating and managing the Sanjivani Clinic booking platform. Sanjivani Clinic is the public-facing brand used for healthcare and appointment booking services, while the platform's operations, administration, and related business activities are conducted under AJAY KUMAR SECURITY AGENCY. This disclosure is provided for transparency, compliance, and business identification purposes.
                 </p>
               </div>
-
-              {/* Renders failures and exception errors if simulator triggers error states */}
-              {paymentErrorMessage && (
-                <div className="my-3 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-500 text-left text-xs leading-normal animate-scale-up">
-                  <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle size={14} /> System Exception</div>
-                  {paymentErrorMessage}
-                </div>
-              )}
-
-              <div className="space-y-3 mt-4">
-                {paymentLifecycle === "PENDING_PAYMENT" || paymentLifecycle === "PAYMENT_PROCESSING" ? (
-                  <button 
-                    onClick={executeConfirmedBooking}
-                    disabled={paymentLoading}
-                    className="w-full py-3 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs tracking-wider uppercase flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-teal-500/10"
-                  >
-                    {paymentLoading ? (
-                      <>
-                        <Loader2 size={12} className="animate-spin text-white" /> Requesting CF session auth...
-                      </>
-                    ) : (
-                      "Confirm & Pay ₹99 via Checkout"
-                    )}
-                  </button>
-                ) : (
-                  <button 
-                    onClick={() => {
-                      setShowPaymentModal(false);
-                      setPaymentLifecycle("PENDING_PAYMENT");
-                      setPaymentErrorMessage("");
-                    }}
-                    className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-bold rounded-xl text-xs tracking-wider uppercase transition-all"
-                  >
-                    Dismiss Session
-                  </button>
-                )}
-                
-                {/* Cashfree Integration SDK Insertion Pointer Comment */}
-                {/* 
-                  // MIGRATION INTEGRATION NOTICE:
-                  // 1. Initialize checkout dynamically on Cashfree JS Web SDK
-                  // 2. cf.initialise({ mode: "sandbox" })
-                  // 3. cf.pay({ paymentSessionId: simulatedSessionId })
-                */}
-                <div className="flex items-center justify-center gap-1.5 text-[9px] text-zinc-500 font-bold uppercase tracking-widest">
-                  <ShieldCheck size={10} className="text-emerald-500" /> Gateway Session Protected
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* STAFF CUSTOM QUEUE RESET MODAL */}
-      {showResetConfirmModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowResetConfirmModal(false)} />
-          
-          <div className={`relative max-w-sm w-full rounded-2xl p-6 ${card} z-10 border border-rose-500/30 animate-scale-up shadow-2xl shadow-rose-950/10`}>
-            <div className="text-center">
-              <div className="h-10 w-10 bg-rose-500/10 text-rose-500 mx-auto rounded-xl flex items-center justify-center mb-3 border border-rose-500/20 shadow-sm animate-pulse">
-                <AlertCircle size={20} />
-              </div>
-              <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-1 tracking-tight">Reset Daily Queue?</h3>
-              <p className="text-zinc-500 text-xs mb-5">
-                This will reset the active roster and revert the live token tracker back to <strong className="text-rose-500">#{QUEUE_START}</strong>.
-              </p>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => setShowResetConfirmModal(false)}
-                  className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold uppercase rounded-xl transition-colors"
+              <div className="mt-8 pt-6 border-t border-slate-200 dark:border-zinc-800">
+                <button
+                  onClick={() => { setPage("home"); window.scrollTo(0, 0); }}
+                  className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs tracking-wider uppercase transition-all"
                 >
-                  Cancel
-                </button>
-                <button 
-                  onClick={executeResetQueue}
-                  className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase rounded-xl transition-colors"
-                >
-                  Confirm Reset
+                  Back to Dashboard
                 </button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </section>
+        )}
+      </main>
 
-      {/* STICKY BOTTOM CARD */}
-      {page !== "booking" && (
-        <div className={`md:hidden fixed bottom-6 left-4 right-4 z-40 p-3.5 rounded-xl shadow-2xl flex items-center justify-between gap-3 border transition-all duration-300 hover:scale-[1.02] animate-fade-in ${
-          darkMode 
-            ? "bg-zinc-955/95 border-zinc-800/80 shadow-black/40 text-white" 
-            : "bg-white/95 border-slate-200/80 shadow-slate-300/40 text-slate-900"
-        } backdrop-blur-xl`}>
-          <div className="flex items-center gap-2.5">
-            <div className="h-9 w-9 rounded-lg overflow-hidden border border-slate-200 dark:border-zinc-800 shrink-0 shadow-sm">
+      {/* FOOTER SECTION: Dynamic Contrast and Always Stick to Bottom */}
+      <footer className={`mt-auto border-t py-8 transition-colors duration-300 ${darkMode ? "border-zinc-900 bg-zinc-950/40" : "border-slate-200 bg-white/60"}`}>
+        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <div className="h-6 w-6 flex-shrink-0 bg-teal-600 rounded overflow-hidden border border-teal-500/20 relative shadow-sm">
               <img 
-                src="https://i.ibb.co/zHff4NrF/Screenshot-2026-06-04-221109.png" 
-                alt="Dr Ajay Kumar" 
+                src="https://i.ibb.co/ZRhN4prd/image.png" 
+                alt="Clinic Emblem" 
                 className="h-full w-full object-cover" 
               />
             </div>
-            <div className="text-left">
-              <div className="font-bold text-xs">{INITIAL_DOCTORS[0].name}</div>
-              <div className="text-[9px] font-bold uppercase text-teal-600 dark:text-teal-400">Roster Token: #{queueNo}</div>
-            </div>
+            <span className="text-xs font-bold text-zinc-900 dark:text-zinc-50">Sanjivani Clinic</span>
           </div>
-          <button 
-            onClick={() => setPage("booking")}
-            className="bg-teal-600 hover:bg-teal-500 text-white font-bold px-4 py-2 rounded-lg text-[10px] tracking-wider uppercase flex items-center gap-1 active:scale-95 transition-transform"
-          >
-            Book Now <ArrowRight size={10} />
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-6 text-xs font-medium">
+            <button 
+              onClick={() => { setPage("home"); window.scrollTo(0, 0); }}
+              className="text-slate-600 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
+            >
+              Dashboard
+            </button>
+            <button 
+              onClick={() => { setPage("booking"); window.scrollTo(0, 0); }}
+              className="text-slate-600 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
+            >
+              Book Appointment
+            </button>
+            <button 
+              onClick={() => { setPage("business-info"); window.scrollTo(0, 0); }}
+              className="text-slate-600 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors font-bold"
+            >
+              Business Information
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500 dark:text-zinc-500">
+            &copy; {new Date().getFullYear()} Sanjivani Clinic. All rights reserved.
+          </p>
         </div>
-      )}
-
-      {/* Dynamic Toast Feed */}
-      {showToast && (
-        <div className="fixed top-20 right-6 z-50 px-4 py-3 rounded-xl bg-teal-600 text-white text-xs font-bold shadow-2xl flex items-center gap-2 animate-scale-up">
-          <span className="h-1.5 w-1.5 bg-white rounded-full animate-ping"></span>
-          {toastMessage}
-        </div>
-      )}
+      </footer>
 
       {/* Floating WhatsApp Care Link */}
       <a 
