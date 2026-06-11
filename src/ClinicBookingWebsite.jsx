@@ -165,7 +165,7 @@ export default function ClinicBookingWebsite() {
     localStorage.setItem("clinicBookings", JSON.stringify(bookings));
   }, [bookings]);
 
-  // Clean mount-only daily roster expiration validation
+  // Clean mount-only daily roster expiration validation: Prevents infinite loops
   useEffect(() => {
     const savedResetAt = Number(localStorage.getItem("clinicQueueResetAt"));
     const now = Date.now();
@@ -227,7 +227,19 @@ export default function ClinicBookingWebsite() {
     }
   };
 
-  const inputClass = `w-full px-4 py-3 rounded-xl outline-none border transition-all duration-300 text-sm font-medium focus:ring-2 focus:ring-teal-500/20 ${
+  const getStepClass = (step) => {
+    const isActive = paymentLifecycle === step;
+    if (isActive) {
+      return darkMode 
+        ? "bg-teal-500/25 text-teal-300 border border-teal-500/40" 
+        : "bg-teal-50 text-teal-700 border border-teal-200";
+    }
+    return darkMode 
+      ? "bg-zinc-900/40 text-zinc-600 border border-transparent" 
+      : "bg-slate-100 text-slate-400 border border-transparent";
+  };
+
+  const inputClass = `w-full px-4 py-3 rounded-xl outline-none border transition-all duration-300 text-sm font-medium focus:ring-2 focus:ring-teal-500/30 ${
     darkMode 
       ? "bg-zinc-900/50 border-zinc-800 text-zinc-100 placeholder-zinc-600 focus:border-teal-500 focus:bg-zinc-900" 
       : "bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-teal-500 focus:bg-slate-50"
@@ -382,7 +394,7 @@ export default function ClinicBookingWebsite() {
     setPaymentErrorMessage("");
     setPaymentLifecycle("PAYMENT_PROCESSING");
 
-    // CASHFREE CHECKOUT START
+    // CASHFREE GATEWAY CHECKOUT INTEGRATION
     // To trigger the official checkout modal on production using Cashfree JS SDK:
     // 1. Load the JavaScript SDK library in index.html: <script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>
     // 2. Setup SDK client in code: const cashfree = Cashfree({ mode: "sandbox" });
@@ -391,7 +403,7 @@ export default function ClinicBookingWebsite() {
     //      paymentSessionId: paymentSessionId,
     //      redirectTarget: "_self" 
     //    });
-    // CASHFREE CHECKOUT END
+    // CASHFREE GATEWAY CHECKOUT END
 
     const stampNow = () => new Date().toLocaleTimeString();
 
@@ -609,7 +621,7 @@ export default function ClinicBookingWebsite() {
             <button 
               onClick={() => setDarkMode((v) => !v)} 
               className={`p-2 rounded-lg border hover:scale-105 active:scale-95 transition-all ${
-                darkMode ? "bg-zinc-900/50 border-zinc-800 text-zinc-300 hover:bg-zinc-805" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
+                darkMode ? "bg-zinc-900/50 border-zinc-850 text-zinc-300 hover:bg-zinc-800" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
               }`}
               aria-label="Toggle visual theme"
             >
@@ -809,7 +821,7 @@ export default function ClinicBookingWebsite() {
                 <div className="flex flex-col sm:flex-row gap-3 justify-start lg:justify-end">
                   <button onClick={() => setPage("booking")} className="px-5 py-3.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs tracking-wider uppercase transition-colors">Request Booking Slot</button>
                   <a href="tel:9631146327" className={`px-5 py-3.5 rounded-xl border text-center font-bold text-xs tracking-wider uppercase transition-all ${
-                    darkMode ? "bg-zinc-955/80 border-zinc-855 text-zinc-300 hover:bg-zinc-900" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
+                    darkMode ? "bg-zinc-950/80 border-zinc-855 text-zinc-300 hover:bg-zinc-900" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
                   }`}>Call Registry Desk</a>
                 </div>
               </div>
@@ -867,7 +879,7 @@ export default function ClinicBookingWebsite() {
                 </div>
 
                 <div>
-                  <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-zinc-700 dark:text-zinc-300 font-bold">Select Appointment Slot</label>
+                  <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-slate-700 dark:text-zinc-300 font-bold">Select Appointment Slot</label>
                   <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto pr-1">
                     {slots.map((slot) => (
                       <button 
@@ -922,7 +934,7 @@ export default function ClinicBookingWebsite() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-zinc-700 dark:text-zinc-300 font-bold">Phone Number (For Booking Updates) <span className="text-rose-500">*</span></label>
+                    <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-slate-700 dark:text-zinc-300 font-bold">Phone Number (For Booking Updates) <span className="text-rose-500">*</span></label>
                     <input
                       value={form.phone}
                       onChange={(e) => setForm({ ...form, phone: e.target.value })}
@@ -935,7 +947,7 @@ export default function ClinicBookingWebsite() {
                     )}
                   </div>
                   <div>
-                    <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-zinc-700 dark:text-zinc-300 font-bold">Gender Identifier</label>
+                    <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-slate-700 dark:text-zinc-300 font-bold">Gender Identifier</label>
                     <select 
                       value={form.gender} 
                       onChange={(e) => setForm({ ...form, gender: e.target.value })} 
@@ -949,7 +961,7 @@ export default function ClinicBookingWebsite() {
                 </div>
 
                 <div>
-                  <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-zinc-700 dark:text-zinc-300 font-bold">Symptom Notes / Clinical Description (Optional)</label>
+                  <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-slate-700 dark:text-zinc-300 font-bold">Symptom Notes / Clinical Description (Optional)</label>
                   <textarea 
                     rows="2" 
                     value={form.reason} 
@@ -973,14 +985,14 @@ export default function ClinicBookingWebsite() {
               </div>
             </div>
 
-            {/* Right Booking receipt summary column - Fixed Post-Confirmation View Bug */}
+            {/* Right Booking receipt summary column */}
             <div className={`rounded-[1.5rem] p-6 border lg:col-span-5 ${darkMode ? "bg-zinc-900/30 border-zinc-800" : "bg-white border-slate-200"} flex flex-col justify-between`}>
               <div>
                 <h2 className="text-xl font-bold mb-4 tracking-tight text-slate-900 dark:text-zinc-100">Appointment Receipt</h2>
                 <div className={`rounded-2xl p-5 border ${darkMode ? "bg-zinc-950/80 border-zinc-900" : "bg-slate-50 border-slate-200"}`}>
                   <div className={`flex items-center justify-between border-b pb-4 mb-4 ${darkMode ? "border-zinc-900/60" : "border-slate-200"}`}>
                     <div>
-                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold">Provider Assigned</div>
+                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold">Provider Assigned</div>
                       <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">
                         {bookingStatus === "confirmed" && lastConfirmedBooking ? lastConfirmedBooking.doctor : selectedDoctor}
                       </div>
@@ -989,26 +1001,26 @@ export default function ClinicBookingWebsite() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold">Schedule Date</div>
+                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold">Schedule Date</div>
                       <div className="text-xs font-bold text-zinc-900 dark:text-zinc-200 flex items-center gap-1.5 mt-1">
                         <CalendarDays size={13} /> {todayLabel}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold">Reserved Slot</div>
+                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold">Reserved Slot</div>
                       <div className="text-xs font-bold text-zinc-900 dark:text-zinc-200 flex items-center gap-1.5 mt-1">
                         <Clock3 size={13} /> {bookingStatus === "confirmed" && lastConfirmedBooking ? lastConfirmedBooking.slot : (selectedSlot || "None Selected")}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold">Queue Token</div>
+                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold">Queue Token</div>
                       <div className="text-sm font-bold text-teal-600 dark:text-teal-400 mt-1 font-mono">
                         {/* Dynamic Token Mapping - Solved summary race condition */}
                         {bookingStatus === "confirmed" && lastConfirmedBooking ? `#${lastConfirmedBooking.token}` : "Awaiting Authorization"}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold">Booking Status</div>
+                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold">Booking Status</div>
                       <div className="text-xs font-bold text-zinc-900 dark:text-zinc-200 mt-1 flex items-center gap-1">
                         <span className={`h-1.5 w-1.5 rounded-full ${bookingStatus === "confirmed" ? "bg-teal-500 animate-pulse" : "bg-amber-500"}`}></span>
                         {bookingStatus === "confirmed" ? " Roster Confirmed" : "Awaiting Deposit"}
@@ -1019,7 +1031,7 @@ export default function ClinicBookingWebsite() {
                   {/* Dynamic Audit Trail Timeline rendering for Confirmed Appointments */}
                   {bookingStatus === "confirmed" && lastConfirmedBooking?.timeline && (
                     <div className="mt-4 pt-4 border-t border-zinc-900/60 text-left">
-                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold mb-2">Audit trail events</div>
+                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold mb-2">Audit trail events</div>
                       <div className="space-y-2">
                         {lastConfirmedBooking.timeline.map((event, idx) => (
                           <div key={idx} className="flex gap-2 text-[10px] leading-relaxed animate-fade-in">
@@ -1293,19 +1305,19 @@ export default function ClinicBookingWebsite() {
           <div className="flex flex-wrap items-center justify-center gap-6 text-xs font-medium">
             <button 
               onClick={() => { setPage("home"); window.scrollTo(0, 0); }}
-              className="text-slate-600 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
+              className="text-slate-640 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
             >
               Dashboard
             </button>
             <button 
               onClick={() => { setPage("booking"); window.scrollTo(0, 0); }}
-              className="text-slate-600 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
+              className="text-slate-640 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
             >
               Book Appointment
             </button>
             <button 
               onClick={() => { setPage("business-info"); window.scrollTo(0, 0); }}
-              className="text-slate-600 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors font-bold"
+              className="text-slate-640 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors font-bold"
             >
               Business Information
             </button>
