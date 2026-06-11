@@ -87,8 +87,25 @@ const faqs = [
 const QUEUE_START = 1;
 const QUEUE_RESET_MS = 24 * 60 * 60 * 1000;
 
-// Production API Base URL pointing directly to your live Render backend
 const API_BASE_URL = "https://clinic-backend-px0v.onrender.com";
+
+const fetchWithRetry = async (url, options = {}, retries = 3, delay = 1500) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      console.log(`[DEBUG FRONTEND] Fetch attempt ${i + 1}/${retries} to URL: ${url}`);
+      const response = await fetch(url, options);
+      if (response.ok) {
+        console.log(`[DEBUG FRONTEND] Fetch successful. Status: ${response.status}`);
+        return response;
+      }
+      throw new Error(`HTTP_STATUS_${response.status}`);
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      console.warn(`[DEBUG FRONTEND] Fetch attempt ${i + 1}/${retries} failed. Retrying in ${delay}ms...`, err);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+};
 
 export default function ClinicBookingWebsite() {
   const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
@@ -121,7 +138,6 @@ export default function ClinicBookingWebsite() {
   const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
 
-  // Cashfree Architectural Step-by-Step State Controllers
   const [paymentLifecycle, setPaymentLifecycle] = useState("PENDING_PAYMENT"); 
   const [gatewaySimMode, setGatewaySimMode] = useState("CLIENT_CONFIRM_FIRST"); 
   const [simulatedOrderId, setSimulatedOrderId] = useState("");
@@ -136,7 +152,6 @@ export default function ClinicBookingWebsite() {
   const [editingIndex, setEditingIndex] = useState(null);
   const [editForm, setEditForm] = useState({ name: "", slot: "", status: "" });
 
-  // Patient Registration state hook values
   const [form, setForm] = useState({
     name: "",
     age: "",
@@ -155,7 +170,6 @@ export default function ClinicBookingWebsite() {
     ];
   });
 
-  // Calculate live next token sequentially from active backend sync records
   const queueNo = useMemo(() => {
     const confirmedCount = bookings.filter(b => b.status === "Confirmed" || b.status === "Completed").length;
     return confirmedCount > 0 ? confirmedCount + 1 : QUEUE_START;
@@ -165,7 +179,6 @@ export default function ClinicBookingWebsite() {
     localStorage.setItem("clinicBookings", JSON.stringify(bookings));
   }, [bookings]);
 
-  // Clean mount-only daily roster expiration validation: Prevents infinite loops
   useEffect(() => {
     const savedResetAt = Number(localStorage.getItem("clinicQueueResetAt"));
     const now = Date.now();
@@ -184,10 +197,9 @@ export default function ClinicBookingWebsite() {
     }
   }, []);
 
-  // Highly optimized slot timer countdown side effect: Prevents interval rebuilding
   useEffect(() => {
     let interval = null;
-    if (showPaymentModal && paymentLifecycle !== "BOOKING_CONFIRMED") {
+    if (showPaymentModal && paymentLifecycle !== "BOOKING_CONFIRMED" && paymentLifecycle !== "PAYMENT_FAILED") {
       interval = setInterval(() => {
         setSlotLockTimeLeft((prev) => {
           if (prev <= 1) {
@@ -204,6 +216,75 @@ export default function ClinicBookingWebsite() {
       if (interval) clearInterval(interval);
     };
   }, [showPaymentModal, paymentLifecycle]);
+
+  useEffect(() => {
+    const synchronizeOfflineQueue = async () => {
+      const savedQueue = localStorage.getItem("clinicOfflineRequests");
+      if (!savedQueue) return;
+
+      const queuedRequests = JSON.parse(savedQueue);
+      if (queuedRequests.length === 0) return;
+
+      console.log(`[DEBUG FRONTEND] Sync Engine: Restored connection. Syncing ${queuedRequests.length} queued requests.`);
+      const remainingRequests = [];
+
+      for (const req of queuedRequests) {
+        try {
+          console.log(`[DEBUG FRONTEND] Sync Engine: Syncing request for ${req.payload.name}`);
+          const initRes = await fetch(`${API_BASE_URL}/api/payments/initialize-checkout`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(req.payload)
+          });
+          const initData = await initRes.json();
+
+          if (initData.success) {
+            const verifyRes = await fetch(`${API_BASE_URL}/api/payments/verify-transaction`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ orderId: initData.orderId })
+            });
+            const verifyData = await verifyRes.json();
+
+            if (verifyData.success) {
+              const stampNow = () => new Date().toLocaleTimeString();
+              const confirmedBooking = {
+                ...req.payload,
+                status: "Confirmed",
+                createdAt: new Date().toISOString(),
+                token: verifyData.token,
+                timeline: [
+                  { status: "PENDING_PAYMENT", notes: "Offline request synchronized with server.", timestamp: stampNow() },
+                  { status: "BOOKING_CONFIRMED", notes: `Server processed payment. Token #${verifyData.token} generated.`, timestamp: stampNow() }
+                ]
+              };
+
+              setBookings((prev) => [confirmedBooking, ...prev]);
+              setToastMessage(`Offline booking for ${req.payload.name} successfully synced!`);
+              setShowToast(true);
+              setTimeout(() => setShowToast(false), 4000);
+            } else {
+              remainingRequests.push(req);
+            }
+          } else {
+            remainingRequests.push(req);
+          }
+        } catch (err) {
+          console.warn("[DEBUG FRONTEND] Sync Engine: Server unreachable, keeping in queue.", err);
+          remainingRequests.push(req);
+        }
+      }
+
+      localStorage.setItem("clinicOfflineRequests", JSON.stringify(remainingRequests));
+    };
+
+    window.addEventListener("online", synchronizeOfflineQueue);
+    if (navigator.onLine) {
+      synchronizeOfflineQueue();
+    }
+
+    return () => window.removeEventListener("online", synchronizeOfflineQueue);
+  }, [bookings]);
 
   const theme = darkMode ? "bg-zinc-950 text-zinc-100" : "bg-slate-50 text-slate-900";
   const card = darkMode ? "bg-zinc-900/60 border-zinc-800/80 text-zinc-100 shadow-xl shadow-black/20" : "bg-white border-slate-200/90 text-slate-900 shadow-sm";
@@ -341,39 +422,49 @@ export default function ClinicBookingWebsite() {
     return Object.keys(errors).length === 0;
   };
 
-  // 1. Initialise Checkout on Backend (Establishes Concurrency Hold & Lock)
   const handleBookingClick = async () => {
-    if (!validateForm()) return;
+    if (!validateForm()) {
+      console.warn("[DEBUG FRONTEND] Form validation failed. Errors:", formErrors);
+      return;
+    }
 
     setPaymentLoading(true);
     setPaymentErrorMessage("");
 
+    const payload = {
+      name: form.name.trim(),
+      age: Number(form.age),
+      gender: form.gender,
+      phone: form.phone.trim(),
+      reason: form.reason.trim() || "No symptoms specified",
+      doctor: selectedDoctor,
+      slot: selectedSlot,
+      date: todayLabel
+    };
+
+    const targetUrl = `${API_BASE_URL}/api/payments/initialize-checkout`;
+    console.log("[DEBUG FRONTEND] POST to initialize checkout starting.");
+    console.log("[DEBUG FRONTEND] Target URL:", targetUrl);
+    console.log("[DEBUG FRONTEND] Request Payload:", JSON.stringify(payload, null, 2));
+
     try {
-      const response = await fetch(`${API_BASE_URL}/api/payments/initialize-checkout`, {
+      const response = await fetchWithRetry(targetUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          age: Number(form.age),
-          gender: form.gender,
-          phone: form.phone.trim(),
-          reason: form.reason.trim() || "No symptoms specified",
-          doctor: selectedDoctor,
-          slot: selectedSlot,
-          date: todayLabel
-        })
+        body: JSON.stringify(payload)
       });
 
+      console.log("[DEBUG FRONTEND] Response Status Code:", response.status);
       const data = await response.json();
+      console.log("[DEBUG FRONTEND] Response Body:", JSON.stringify(data, null, 2));
 
       if (data.success) {
         setSimulatedOrderId(data.orderId);
         setPaymentSessionId(data.paymentSessionId);
         setPaymentLifecycle("PENDING_PAYMENT");
 
-        // Set lock countdown dynamically based on database response
         const lockSeconds = Math.max(0, Math.floor((new Date(data.lockedUntil).getTime() - Date.now()) / 1000));
         setSlotLockTimeLeft(lockSeconds > 0 ? lockSeconds : 300);
         setShowPaymentModal(true);
@@ -381,34 +472,29 @@ export default function ClinicBookingWebsite() {
         alert(data.message || "Failed to initialize booking session hold.");
       }
     } catch (err) {
-      console.error(err);
-      alert("Error establishing connection with Sanjivani Clinic payment APIs.");
+      console.error("[DEBUG FRONTEND] Checkout initialization threw exception:", err);
+      setPaymentLifecycle("PAYMENT_FAILED");
+      setPaymentErrorMessage("UNREACHABLE_SERVER");
+      setShowPaymentModal(true);
     } finally {
       setPaymentLoading(false);
     }
   };
 
-  // 2. Client Payment Verification Lifecycle Execution
   const executeConfirmedBooking = async () => {
     setPaymentLoading(true);
     setPaymentErrorMessage("");
     setPaymentLifecycle("PAYMENT_PROCESSING");
 
-    // CASHFREE GATEWAY CHECKOUT INTEGRATION
-    // To trigger the official checkout modal on production using Cashfree JS SDK:
-    // 1. Load the JavaScript SDK library in index.html: <script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>
-    // 2. Setup SDK client in code: const cashfree = Cashfree({ mode: "sandbox" });
-    // 3. Trigger modal pay session:
-    //    await cashfree.checkout({
-    //      paymentSessionId: paymentSessionId,
-    //      redirectTarget: "_self" 
-    //    });
-    // CASHFREE GATEWAY CHECKOUT END
-
     const stampNow = () => new Date().toLocaleTimeString();
+    const targetUrl = `${API_BASE_URL}/api/payments/verify-transaction`;
+    const payload = { orderId: simulatedOrderId };
+
+    console.log("[DEBUG FRONTEND] POST to verify transaction starting.");
+    console.log("[DEBUG FRONTEND] Target URL:", targetUrl);
+    console.log("[DEBUG FRONTEND] Request Payload:", JSON.stringify(payload, null, 2));
 
     try {
-      // Simulate gateway operational delay
       await new Promise(resolve => setTimeout(resolve, 1500));
 
       if (gatewaySimMode === "CLIENT_CANCEL") {
@@ -419,32 +505,38 @@ export default function ClinicBookingWebsite() {
       }
 
       if (gatewaySimMode === "WEBHOOK_CONFIRM_FIRST") {
+        const webhookUrl = `${API_BASE_URL}/api/payments/webhook`;
+        const webhookPayload = {
+          order: { order_id: simulatedOrderId },
+          payment: { payment_status: "SUCCESS", cf_payment_id: `tx_cf_async_${Date.now()}` }
+        };
+        console.log("[DEBUG FRONTEND] Webhook Simulation starting...");
+        console.log("[DEBUG FRONTEND] Webhook URL:", webhookUrl);
+        console.log("[DEBUG FRONTEND] Webhook Payload:", JSON.stringify(webhookPayload, null, 2));
         try {
-          await fetch(`${API_BASE_URL}/api/payments/webhook`, {
+          const webhookRes = await fetch(webhookUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              order: { order_id: simulatedOrderId },
-              payment: { payment_status: "SUCCESS", cf_payment_id: `tx_cf_async_${Date.now()}` }
-            })
+            body: JSON.stringify(webhookPayload)
           });
+          console.log("[DEBUG FRONTEND] Webhook status response:", webhookRes.status);
         } catch (webhookErr) {
-          console.error("Asynchronous webhook simulation failure:", webhookErr);
+          console.error("[DEBUG FRONTEND] Webhook Simulation error:", webhookErr);
         }
       }
 
-      // Hit backend API to securely verify gateway state
-      const response = await fetch(`${API_BASE_URL}/api/payments/verify-transaction`, {
+      console.log("[DEBUG FRONTEND] Dispatching verify request to server...");
+      const response = await fetchWithRetry(targetUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          orderId: simulatedOrderId
-        })
+        body: JSON.stringify(payload)
       });
 
+      console.log("[DEBUG FRONTEND] Verification Response Status Code:", response.status);
       const data = await response.json();
+      console.log("[DEBUG FRONTEND] Verification Response Body:", JSON.stringify(data, null, 2));
 
       if (data.success) {
         setPaymentLifecycle("PAYMENT_VERIFIED");
@@ -466,7 +558,7 @@ export default function ClinicBookingWebsite() {
           status: "Confirmed",
           createdAt: new Date().toISOString(),
           date: todayLabel,
-          token: data.token, // Uses exact token returned by backend APIs
+          token: data.token,
           timeline: auditTimeline
         };
 
@@ -475,7 +567,6 @@ export default function ClinicBookingWebsite() {
         setBookingStatus("confirmed");
         setPaymentLifecycle("BOOKING_CONFIRMED");
 
-        // Clear input form fields
         setForm({ name: "", age: "", gender: "Male", phone: "", reason: "" });
         setFormErrors({});
 
@@ -484,16 +575,44 @@ export default function ClinicBookingWebsite() {
         setTimeout(() => setShowToast(false), 4000);
         setShowPaymentModal(false);
       } else {
+        console.error("[DEBUG FRONTEND] Verification rejected by server logic:", data.message);
         setPaymentLifecycle("PAYMENT_FAILED");
         setPaymentErrorMessage(data.message || "Gateway declined transaction validation.");
       }
     } catch (err) {
-      console.error(err);
+      console.error("[DEBUG FRONTEND] Verification threw error:", err);
       setPaymentLifecycle("PAYMENT_FAILED");
       setPaymentErrorMessage("Network latency error verifying transaction with server.");
     } finally {
       setPaymentLoading(false);
     }
+  };
+
+  const handleOfflineQueueSubmission = () => {
+    const payload = {
+      name: form.name.trim(),
+      age: Number(form.age),
+      gender: form.gender,
+      phone: form.phone.trim(),
+      reason: form.reason.trim() || "No symptoms specified",
+      doctor: selectedDoctor,
+      slot: selectedSlot,
+      date: todayLabel
+    };
+
+    console.log("[DEBUG FRONTEND] Adding request to offline localStorage queue:", payload);
+
+    const existingQueue = JSON.parse(localStorage.getItem("clinicOfflineRequests") || "[]");
+    existingQueue.push({ payload, id: `offline_req_${Date.now()}` });
+    localStorage.setItem("clinicOfflineRequests", JSON.stringify(existingQueue));
+
+    setForm({ name: "", age: "", gender: "Male", phone: "", reason: "" });
+    setFormErrors({});
+
+    setShowPaymentModal(false);
+    setToastMessage("Roster Request Queued! System will automatically synchronize.");
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 5000);
   };
 
   const handleApprove = (index) => {
@@ -572,7 +691,7 @@ export default function ClinicBookingWebsite() {
       onClick={onClick}
       className={`px-4 py-2 rounded-xl transition-all duration-300 text-xs font-bold tracking-wide uppercase ${
         active 
-          ? (darkMode ? "bg-zinc-100 text-zinc-950" : "bg-teal-600 text-white") 
+          ? (darkMode ? "bg-zinc-100 text-zinc-950 shadow-sm" : "bg-teal-600 text-white shadow-sm") 
           : (darkMode ? "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/50" : "text-slate-650 hover:text-slate-900 hover:bg-slate-100")
       }`}
     >
@@ -621,7 +740,7 @@ export default function ClinicBookingWebsite() {
             <button 
               onClick={() => setDarkMode((v) => !v)} 
               className={`p-2 rounded-lg border hover:scale-105 active:scale-95 transition-all ${
-                darkMode ? "bg-zinc-900/50 border-zinc-850 text-zinc-300 hover:bg-zinc-800" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
+                darkMode ? "bg-zinc-900/50 border-zinc-800 text-zinc-300 hover:bg-zinc-805" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
               }`}
               aria-label="Toggle visual theme"
             >
@@ -700,7 +819,7 @@ export default function ClinicBookingWebsite() {
                       {translation.book} <ArrowRight size={14} />
                     </button>
                     
-                    <a href="tel:9631146327" className={`px-5 py-3.5 rounded-xl border text-xs font-bold tracking-wider uppercase transition-colors flex items-center gap-2 justify-center hover:scale-105 active:scale-95 ${
+                    <a href="tel:9631146327" className={`px-5 py-3.5 rounded-xl border text-xs font-bold tracking-wider uppercase transition-all flex items-center gap-2 justify-center hover:scale-105 active:scale-95 ${
                       darkMode ? "bg-zinc-900/50 border-zinc-800 text-zinc-300 hover:bg-zinc-800" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
                     }`}>
                       <PhoneCall size={14} className="text-teal-600 dark:text-teal-400" /> {translation.contact}
@@ -934,7 +1053,7 @@ export default function ClinicBookingWebsite() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-slate-700 dark:text-zinc-300 font-bold">Phone Number (For Booking Updates) <span className="text-rose-500">*</span></label>
+                    <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-zinc-700 dark:text-zinc-300 font-bold">Phone Number (For Booking Updates) <span className="text-rose-500">*</span></label>
                     <input
                       value={form.phone}
                       onChange={(e) => setForm({ ...form, phone: e.target.value })}
@@ -947,7 +1066,7 @@ export default function ClinicBookingWebsite() {
                     )}
                   </div>
                   <div>
-                    <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-slate-700 dark:text-zinc-300 font-bold">Gender Identifier</label>
+                    <label className="text-[10px] tracking-wider uppercase block mb-1.5 opacity-80 text-zinc-700 dark:text-zinc-300 font-bold">Gender Identifier</label>
                     <select 
                       value={form.gender} 
                       onChange={(e) => setForm({ ...form, gender: e.target.value })} 
@@ -985,14 +1104,14 @@ export default function ClinicBookingWebsite() {
               </div>
             </div>
 
-            {/* Right Booking receipt summary column */}
+            {/* Right Booking receipt summary column - Fixed Post-Confirmation View Bug */}
             <div className={`rounded-[1.5rem] p-6 border lg:col-span-5 ${darkMode ? "bg-zinc-900/30 border-zinc-800" : "bg-white border-slate-200"} flex flex-col justify-between`}>
               <div>
                 <h2 className="text-xl font-bold mb-4 tracking-tight text-slate-900 dark:text-zinc-100">Appointment Receipt</h2>
                 <div className={`rounded-2xl p-5 border ${darkMode ? "bg-zinc-950/80 border-zinc-900" : "bg-slate-50 border-slate-200"}`}>
                   <div className={`flex items-center justify-between border-b pb-4 mb-4 ${darkMode ? "border-zinc-900/60" : "border-slate-200"}`}>
                     <div>
-                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold">Provider Assigned</div>
+                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold">Provider Assigned</div>
                       <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">
                         {bookingStatus === "confirmed" && lastConfirmedBooking ? lastConfirmedBooking.doctor : selectedDoctor}
                       </div>
@@ -1001,26 +1120,26 @@ export default function ClinicBookingWebsite() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold">Schedule Date</div>
+                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold">Schedule Date</div>
                       <div className="text-xs font-bold text-zinc-900 dark:text-zinc-200 flex items-center gap-1.5 mt-1">
                         <CalendarDays size={13} /> {todayLabel}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold">Reserved Slot</div>
+                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold">Reserved Slot</div>
                       <div className="text-xs font-bold text-zinc-900 dark:text-zinc-200 flex items-center gap-1.5 mt-1">
                         <Clock3 size={13} /> {bookingStatus === "confirmed" && lastConfirmedBooking ? lastConfirmedBooking.slot : (selectedSlot || "None Selected")}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold">Queue Token</div>
+                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold">Queue Token</div>
                       <div className="text-sm font-bold text-teal-600 dark:text-teal-400 mt-1 font-mono">
                         {/* Dynamic Token Mapping - Solved summary race condition */}
                         {bookingStatus === "confirmed" && lastConfirmedBooking ? `#${lastConfirmedBooking.token}` : "Awaiting Authorization"}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold">Booking Status</div>
+                      <div className="text-[9px] tracking-wider uppercase text-slate-500 dark:text-zinc-400 font-bold">Booking Status</div>
                       <div className="text-xs font-bold text-zinc-900 dark:text-zinc-200 mt-1 flex items-center gap-1">
                         <span className={`h-1.5 w-1.5 rounded-full ${bookingStatus === "confirmed" ? "bg-teal-500 animate-pulse" : "bg-amber-500"}`}></span>
                         {bookingStatus === "confirmed" ? " Roster Confirmed" : "Awaiting Deposit"}
@@ -1031,7 +1150,7 @@ export default function ClinicBookingWebsite() {
                   {/* Dynamic Audit Trail Timeline rendering for Confirmed Appointments */}
                   {bookingStatus === "confirmed" && lastConfirmedBooking?.timeline && (
                     <div className="mt-4 pt-4 border-t border-zinc-900/60 text-left">
-                      <div className="text-[9px] tracking-wider uppercase text-zinc-400 font-bold mb-2">Audit trail events</div>
+                      <div className="text-[9px] tracking-wider uppercase text-slate-505 dark:text-zinc-400 mb-2">Audit trail events</div>
                       <div className="space-y-2">
                         {lastConfirmedBooking.timeline.map((event, idx) => (
                           <div key={idx} className="flex gap-2 text-[10px] leading-relaxed animate-fade-in">
@@ -1328,12 +1447,53 @@ export default function ClinicBookingWebsite() {
         </div>
       </footer>
 
+      {/* FLOATING ACTION BOOKING BUTTONS & WIDGETS */}
+      {page !== "booking" && (
+        <button
+          onClick={() => { setPage("booking"); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+          className="hidden md:flex fixed bottom-6 right-24 z-40 items-center gap-2 bg-teal-600 hover:bg-teal-500 text-white font-bold px-5 py-3 rounded-full shadow-lg hover:scale-105 active:scale-95 transition-all duration-300"
+          aria-label="Direct Roster Booking Shortcut"
+        >
+          <CalendarDays size={16} />
+          Book Appointment
+        </button>
+      )}
+
+      {/* STICKY BOTTOM CARD FOR PORTRAIT PHONE LAYOUTS */}
+      {page !== "booking" && (
+        <div className={`md:hidden fixed bottom-6 left-4 right-4 z-40 p-3.5 rounded-xl shadow-2xl flex items-center justify-between gap-3 border transition-all duration-300 hover:scale-[1.02] animate-fade-in ${
+          darkMode 
+            ? "bg-zinc-950/95 border-zinc-800/80 shadow-black/40 text-white" 
+            : "bg-white/95 border-slate-200/80 shadow-slate-300/40 text-slate-900"
+        } backdrop-blur-xl`}>
+          <div className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-lg overflow-hidden border border-slate-200 dark:border-zinc-800 shrink-0 shadow-sm">
+              <img 
+                src="https://i.ibb.co/zHff4NrF/Screenshot-2026-06-04-221109.png" 
+                alt="Dr Ajay Kumar" 
+                className="h-full w-full object-cover" 
+              />
+            </div>
+            <div className="text-left">
+              <div className="font-bold text-xs">{INITIAL_DOCTORS[0].name}</div>
+              <div className="text-[9px] font-bold uppercase text-teal-600 dark:text-teal-400">Roster Token: #{queueNo}</div>
+            </div>
+          </div>
+          <button 
+            onClick={() => setPage("booking")}
+            className="bg-teal-600 hover:bg-teal-500 text-white font-bold px-4 py-2 rounded-lg text-[10px] tracking-wider uppercase flex items-center gap-1 active:scale-95 transition-transform"
+          >
+            Book Now <ArrowRight size={10} />
+          </button>
+        </div>
+      )}
+
       {/* Floating WhatsApp Care Link */}
       <a 
         href="https://wa.me/919631146327" 
         target="_blank" 
         rel="noreferrer" 
-        className="hidden md:grid fixed bottom-6 right-6 z-40 h-12 w-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white place-items-center shadow-lg shadow-emerald-500/10 hover:scale-105 transition-transform"
+        className="hidden md:grid fixed bottom-6 right-6 z-40 h-12 w-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white place-items-center shadow-lg shadow-emerald-500/10 hover:scale-110 active:scale-95 transition-transform duration-300"
         title="Active Support Chat"
       >
         <MessageCircle size={20} />
